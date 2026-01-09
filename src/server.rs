@@ -1,5 +1,5 @@
 use crate::http::{Request, Response, StatusCode, request::ParseError};
-use tokio::{io::AsyncReadExt, net::TcpListener};
+use tokio::{io::AsyncReadExt, net::TcpListener, sync::Semaphore};
 use std::sync::Arc;
 
 pub struct Server {
@@ -23,15 +23,26 @@ impl Server {
 
     pub async fn run<H: Handler + 'static>(self, handler: H) {
         println!("Server is running on {}", &self.addr);
-        let listener = TcpListener::bind(&self.addr).await.unwrap();
+        let listener = match TcpListener::bind(&self.addr).await {
+            Ok(listener) => listener,
+            Err(e) => {
+                eprintln!("Failed to bind server to {}: {}", &self.addr, e);
+                return;
+            }
+        };
         let handler = Arc::new(handler);
+        
+        // Limit concurrent connections to prevent resource exhaustion
+        let connection_limit = Arc::new(Semaphore::new(100));
 
         loop {
             match listener.accept().await {
                 Ok((mut stream, _)) => {
                     let handler = Arc::clone(&handler);
+                    let permit = connection_limit.clone().acquire_owned().await.unwrap();
                     
                     tokio::spawn(async move {
+                        let _permit = permit; // Hold permit until task completes
                         let mut buffer = [0; 1024];
                         match stream.read(&mut buffer).await {
                             Ok(_) => {
@@ -46,13 +57,13 @@ impl Server {
                                 }
                             }
                             Err(e) => {
-                                println!("failed to read from connection {}", e)
+                                println!("Failed to read from connection: {}", e)
                             }
                         }
                     });
                 }
                 Err(e) => {
-                    println!("failed to establish an connection {}", e)
+                    println!("Failed to establish a connection: {}", e)
                 }
             }
         }
