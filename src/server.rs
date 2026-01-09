@@ -39,7 +39,13 @@ impl Server {
             match listener.accept().await {
                 Ok((mut stream, _)) => {
                     let handler = Arc::clone(&handler);
-                    let permit = connection_limit.clone().acquire_owned().await.unwrap();
+                    let permit = match connection_limit.clone().acquire_owned().await {
+                        Ok(permit) => permit,
+                        Err(e) => {
+                            eprintln!("Failed to acquire connection permit: {}", e);
+                            continue;
+                        }
+                    };
                     
                     tokio::spawn(async move {
                         let _permit = permit; // Hold permit until task completes
