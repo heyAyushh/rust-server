@@ -19,7 +19,7 @@ impl WebsiteHandler {
                 if path.starts_with(&self.public_path) {
                     fs::read_to_string(path).ok()
                 } else {
-                    println!("Directory trasversal attack detected");
+                    println!("Directory traversal attack detected");
                     None
                 }
             }
