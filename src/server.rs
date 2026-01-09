@@ -1,14 +1,16 @@
 use crate::http::{Request, Response, StatusCode, request::ParseError};
-use std::{io::Read, net::TcpListener};
+use tokio::{io::AsyncReadExt, net::TcpListener, sync::Semaphore};
+use std::sync::Arc;
 
 pub struct Server {
     addr: String,
 }
 
-pub trait Handler {
-    fn handle_request(&mut self, request: &Request) -> Response;
+#[async_trait::async_trait]
+pub trait Handler: Send + Sync {
+    async fn handle_request(&self, request: &Request<'_>) -> Response;
 
-    fn handle_bad_request(&mut self, e: &ParseError) -> Response {
+    async fn handle_bad_request(&self, e: &ParseError) -> Response {
         println!("Failed to parse request: {}", e);
         Response::new(StatusCode::BadRequest, None)
     }
@@ -19,33 +21,55 @@ impl Server {
         Self { addr }
     }
 
-    pub fn run(self, mut handler: impl Handler) {
+    pub async fn run<H: Handler + 'static>(self, handler: H) {
         println!("Server is running on {}", &self.addr);
-        let listener = TcpListener::bind(&self.addr).unwrap();
+        let listener = match TcpListener::bind(&self.addr).await {
+            Ok(listener) => listener,
+            Err(e) => {
+                eprintln!("Failed to bind server to {}: {}", &self.addr, e);
+                return;
+            }
+        };
+        let handler = Arc::new(handler);
+        
+        // Limit concurrent connections to prevent resource exhaustion
+        let connection_limit = Arc::new(Semaphore::new(100));
 
         loop {
-            match listener.accept() {
+            match listener.accept().await {
                 Ok((mut stream, _)) => {
-                    let mut buffer = [0; 1024];
-                    match stream.read(&mut buffer) {
-                        Ok(_) => {
-                            println!("We have a request. {}", String::from_utf8_lossy(&buffer));
-                            let response = match Request::try_from(&buffer[..]) {
-                                Ok(request) => handler.handle_request(&request),
-                                Err(e) => handler.handle_bad_request(&e),
-                            };
+                    let handler = Arc::clone(&handler);
+                    let permit = match connection_limit.clone().acquire_owned().await {
+                        Ok(permit) => permit,
+                        Err(e) => {
+                            eprintln!("Failed to acquire connection permit: {}", e);
+                            continue;
+                        }
+                    };
+                    
+                    tokio::spawn(async move {
+                        let _permit = permit; // Hold permit until task completes
+                        let mut buffer = [0; 1024];
+                        match stream.read(&mut buffer).await {
+                            Ok(_) => {
+                                println!("We have a request. {}", String::from_utf8_lossy(&buffer));
+                                let response = match Request::try_from(&buffer[..]) {
+                                    Ok(request) => handler.handle_request(&request).await,
+                                    Err(e) => handler.handle_bad_request(&e).await,
+                                };
 
-                            if let Err(e) = response.send(&mut stream) {
-                                println!("Failed to send Response: {}", e);
+                                if let Err(e) = response.send(&mut stream).await {
+                                    println!("Failed to send Response: {}", e);
+                                }
+                            }
+                            Err(e) => {
+                                println!("Failed to read from connection: {}", e)
                             }
                         }
-                        Err(e) => {
-                            println!("failed to read from connection {}", e)
-                        }
-                    }
+                    });
                 }
                 Err(e) => {
-                    println!("failed to establish an connection {}", e)
+                    println!("Failed to establish a connection: {}", e)
                 }
             }
         }

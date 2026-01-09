@@ -1,4 +1,4 @@
-use std::io::{Write, Result as IoResult};
+use tokio::io::{AsyncWriteExt, Result as IoResult};
 use super::status_code::StatusCode;
 pub struct Response {
     status_code: StatusCode,
@@ -10,13 +10,22 @@ impl Response {
         Response { status_code, body }
     }
 
-    pub fn send(&self, stream: &mut impl Write) -> IoResult<()> {
+    pub async fn send(&self, stream: &mut (impl AsyncWriteExt + Unpin)) -> IoResult<()> {
         let body = match &self.body {
             Some(b) => b,
             None => ""
         };
 
-        write!(stream, "HTTP/1.1 {} {}\r\n\r\n{}", self.status_code, self.status_code.reason_phrase(), body)
+        let content_length = body.len();
+        let response = format!(
+            "HTTP/1.1 {} {}\r\nContent-Length: {}\r\n\r\n{}",
+            self.status_code,
+            self.status_code.reason_phrase(),
+            content_length,
+            body
+        );
+        stream.write_all(response.as_bytes()).await?;
+        stream.flush().await
     }
 }
 

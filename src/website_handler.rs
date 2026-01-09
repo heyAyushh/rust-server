@@ -19,7 +19,7 @@ impl WebsiteHandler {
                 if path.starts_with(&self.public_path) {
                     fs::read_to_string(path).ok()
                 } else {
-                    println!("Directory trasversal attack detected");
+                    println!("Directory traversal attack detected");
                     None
                 }
             }
@@ -28,8 +28,9 @@ impl WebsiteHandler {
     }
 }
 
+#[async_trait::async_trait]
 impl Handler for WebsiteHandler {
-    fn handle_request(&mut self, request: &Request) -> Response {
+    async fn handle_request(&self, request: &Request<'_>) -> Response {
         match request.method() {
             Method::GET => match request.path() {
                 "/" => Response::new(StatusCode::Ok, self.read_file("index.html")),
