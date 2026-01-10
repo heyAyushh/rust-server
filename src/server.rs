@@ -38,7 +38,8 @@ impl Server {
         let cpu_count = thread::available_parallelism()
             .map(|n| n.get())
             .unwrap_or(1);
-        let max_connections = cpu_count * 100;
+        // Cap at 10,000 to prevent excessive memory usage on high-core systems
+        let max_connections = (cpu_count * 100).min(10_000);
         let connection_limit = Arc::new(Semaphore::new(max_connections));
         
         println!("Server configured for {} available CPU cores with {} max concurrent connections", 
