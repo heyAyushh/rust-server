@@ -41,7 +41,7 @@ impl Server {
         let max_connections = cpu_count * 100;
         let connection_limit = Arc::new(Semaphore::new(max_connections));
         
-        println!("Server configured with {} worker threads and {} max concurrent connections", 
+        println!("Server configured for {} available CPU cores with {} max concurrent connections", 
                  cpu_count, max_connections);
 
         loop {
