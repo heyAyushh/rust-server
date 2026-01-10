@@ -1,6 +1,7 @@
 use crate::http::{Request, Response, StatusCode, request::ParseError};
 use tokio::{io::AsyncReadExt, net::TcpListener, sync::Semaphore};
 use std::sync::Arc;
+use std::thread;
 
 pub struct Server {
     addr: String,
@@ -32,8 +33,16 @@ impl Server {
         };
         let handler = Arc::new(handler);
         
-        // Limit concurrent connections to prevent resource exhaustion
-        let connection_limit = Arc::new(Semaphore::new(100));
+        // Limit concurrent connections based on available CPU cores to maximize performance
+        // Using a multiplier to allow for I/O-bound workloads while preventing resource exhaustion
+        let cpu_count = thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(1);
+        let max_connections = cpu_count * 100;
+        let connection_limit = Arc::new(Semaphore::new(max_connections));
+        
+        println!("Server configured with {} worker threads and {} max concurrent connections", 
+                 cpu_count, max_connections);
 
         loop {
             match listener.accept().await {
