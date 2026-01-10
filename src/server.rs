@@ -1,6 +1,11 @@
 use crate::http::{Request, Response, StatusCode, request::ParseError};
 use tokio::{io::AsyncReadExt, net::TcpListener, sync::Semaphore};
 use std::sync::Arc;
+use std::thread;
+
+// Server configuration constants
+const CONNECTIONS_PER_CPU: usize = 100;
+const MAX_CONNECTIONS_CAP: usize = 10_000;
 
 pub struct Server {
     addr: String,
@@ -32,8 +37,20 @@ impl Server {
         };
         let handler = Arc::new(handler);
         
-        // Limit concurrent connections to prevent resource exhaustion
-        let connection_limit = Arc::new(Semaphore::new(100));
+        // Limit concurrent connections based on available CPU cores to maximize performance
+        // Using a multiplier to allow for I/O-bound workloads while preventing resource exhaustion
+        let cpu_count = match thread::available_parallelism() {
+            Ok(n) => n.get(),
+            Err(e) => {
+                eprintln!("Failed to detect available parallelism ({}), defaulting to 1 core", e);
+                1
+            }
+        };
+        let max_connections = (cpu_count * CONNECTIONS_PER_CPU).min(MAX_CONNECTIONS_CAP);
+        let connection_limit = Arc::new(Semaphore::new(max_connections));
+        
+        println!("Server configured for {} available CPU cores with {} max concurrent connections", 
+                 cpu_count, max_connections);
 
         loop {
             match listener.accept().await {
